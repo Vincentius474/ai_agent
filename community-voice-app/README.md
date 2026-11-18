@@ -1,259 +1,491 @@
-# Service Delivery Reporter (Community Voice)
+# Community Voice
 
-Citizens report local service problems (water, electricity, roads, sanitation, waste) by text, voice note and an optional photo, in English, isiZulu, isiXhosa, Afrikaans or Sesotho. AI agents triage the report, check the web for known outages, route it to a department, flag duplicates and draft a reply. Citizens sign in to submit and follow their own reports. An admin reviews: the report, then the reply. Nothing is ever sent.
+Community Voice is a multilingual service-delivery reporting platform that combines a FastAPI AI backend, a Streamlit teaching interface, and a Next.js citizen/admin interface.
 
-All sample data is fictional. This is a teaching project, not a production system.
+Citizens can submit a report as text, a voice note, or a photo. The system:
 
-## What is needed
+1. Redacts personal information locally.
+2. Translates and triages the report.
+3. Routes it to a municipality and department.
+4. Checks relevant web context and possible duplicates.
+5. Pauses for human review.
+6. Drafts a policy-grounded response.
+7. Opens a conversation if an approved draft is sent.
 
-- Windows 11 with Git Bash, or macOS with zsh.
-- [uv](https://docs.astral.sh/uv/), use the following command to install it on windows (using powershell): 
-  ```powershell
-      powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
-- Node.js 
-- Free API keys: Gemini (Google AI Studio), Groq and Tavily. LangSmith is optional.
-- [Ollama](https://ollama.com/download) with a small model, for the privacy filter 
+Supported report categories are electricity, roads, sanitation, waste, and water. The UI also includes session-based conversations, dashboards, report history, review queues, and human approval controls.
 
-## The exact versions
+> **Demo scope:** all sample data is fictional. This project is intended for learning and demonstration, not as a production municipal system. AI output must be reviewed by a human.
 
-This project was built and tested with these versions. Follow "Set up" below as written and you get them: the Python libraries come from `uv.lock` and the JavaScript libraries from `package-lock.json`, so you never type a library version yourself.
+## Table of contents
 
-| Tool | Version | Where it is fixed |
-|---|---|---|
-| uv | 0.13.7 | the install command in step 1 |
-| Python | 3.12.16 | `.python-version` (uv installs the patch release that goes with its own version, so use uv 0.13.7) |
-| Node.js, npm | 24.22.1, 11.19.1 | install this Node.js yourself |
-| Ollama | 0.40.16 | install yourself (the installer gives the newest; newer is fine) |
-| Ollama model | `llama3.2:3b` | the tag in `ollama pull` |
-| Python libraries | for example langgraph 1.2.21, langchain 1.5.0, fastapi 0.162.5, pydantic 2.14.3, chromadb 1.5.9, fastmcp 3.4.11, streamlit 1.67.0, langchain-ollama 1.1.0 | `uv.lock` |
-| JavaScript libraries | Next.js 16.4.6, React 19.3.0, Tailwind CSS 4.3.3 | `frontend/package-lock.json` |
+- [Architecture](#architecture)
+- [Features](#features)
+- [Technology stack](#technology-stack)
+- [Repository layout](#repository-layout)
+- [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Running the applications](#running-the-applications)
+- [Demo accounts](#demo-accounts)
+- [Privacy and voice processing](#privacy-and-voice-processing)
+- [Workflow](#workflow)
+- [API overview](#api-overview)
+- [Eval and quality workflows](#eval-and-quality-workflows)
+- [Docker](#docker)
+- [Resetting local data](#resetting-local-data)
+- [Troubleshooting](#troubleshooting)
 
-Two rules keep the versions the same:
+## Architecture
 
-- **Install with `uv sync --locked` and `npm ci`** (not `uv sync` alone and not `npm install`). `--locked` uses exactly what is in `uv.lock` and stops with an error if `pyproject.toml` and `uv.lock` disagree, instead of quietly choosing other versions. `npm ci` installs exactly what is in `package-lock.json`.
-- **Do not upgrade anything** while you follow the course (no `uv lock --upgrade`, no `uv add`, no `npm update`). `fastmcp` is held below version 4 on purpose, because newer versions do not work with the other MCP library.
-
-Keep `uv.lock` and `frontend/package-lock.json` with the project: they are what makes the versions the same for everyone.
-
-## Set up
-
-1. Install uv.
-
-   Windows (run once in PowerShell):
-
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/0.13.7/install.ps1 | iex"
-   ```
-
-   macOS
-
-   ```bash
-   curl -LsSf https://astral.sh/uv/0.13.7/install.sh | sh
-   ```
-
-   Open a new terminal and check it: `uv --version` should say `uv 0.13.7`. If it shows another version, run the command above again.
-
-2. From the project folder, install Python and the libraries:
-
-   ```bash
-   uv python install 3.12
-   uv sync --locked
-   ```
-
-   Check the result (both should match the table above):
-
-   ```bash
-   uv run python --version
-   uv pip list | grep -E "^(langgraph|langchain|fastapi|pydantic|chromadb|fastmcp|streamlit) "
-   ```
-
-   Expected: `Python 3.12.16`, then the library versions from the table. If `uv sync --locked` stops with an error that the lockfile needs to be updated, you changed `pyproject.toml` or `uv.lock`: restore them from the course files.
-
-3. Create your key file and fill it in. `.env` is git-ignored; never commit it.
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Fill in the four keys that are switched on:
-
-   | Variable | Used for | Where to get it |
-   |---|---|---|
-   | `GEMINI_API_KEY` | Triage, drafting, voice transcription | aistudio.google.com (API keys) |
-   | `GROQ_API_KEY` | Routing, web check | console.groq.com/keys |
-   | `TAVILY_API_KEY` | Web search | app.tavily.com |
-   | `JWT_SECRET` | Signs login tokens | Make your own: `openssl rand -hex 32` |
-
-   Lines that start with `#` are switched off. Take the `#` away when you want one. That is how you turn on LangSmith tracing and evals (`LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT`; the key is at smith.langchain.com, under Settings, API Keys), switch the privacy model off (`PRIVACY_FILTER=false`) or try another model. Tracing sends report text to LangSmith's cloud, so use fictional data only.
-
-4. Create the test accounts (see "Sign in" below):
-
-   ```bash
-   uv run python -m community_voice.auth.seed
-   ```
-
-5. Install Ollama and the model (see "Privacy filter" below).
-
-6. Install the Next.js libraries and create its settings file. You do this once, and it needs Node.js 24.22.1:
-
-   ```bash
-   cd frontend
-   npm ci
-   cp .env.example .env.local
-   cd ..
-   ```
-
-7. Check the setup (no keys or network needed):
-
-   ```bash
-   uv run pytest
-   ```
-
-## Run the app
-
-With the setup done, start three servers, each in its own terminal and each from the project folder. Start the API first, because both screens talk to it.
-
-| # | Server | What it is | Address |
-|---|---|---|---|
-| 1 | API | FastAPI, the brain of the app | http://127.0.0.1:8800 (docs at `/docs`) |
-| 2 | Streamlit | the simple interface | http://localhost:8501 |
-| 3 | Next.js | the full interface | http://localhost:3000 |
-
-```bash
-# Terminal 1: the API (start this one first)
-uv run uvicorn community_voice.api.main:app --port 8800
-
-# Terminal 2: Streamlit
-uv run streamlit run app/streamlit_app.py
-
-# Terminal 3: Next.js
-cd frontend && npm run dev
+```text
+Next.js frontend  ─────┐
+                       ├── HTTP / SSE ──> FastAPI API
+Streamlit app     ─────┘                  │
+                                          ├── LangGraph workflow
+                                          ├── Gemini / Groq / Tavily
+                                          ├── Local Ollama privacy filter
+                                          ├── SQLite repositories
+                                          ├── Chroma RAG indexes
+                                          └── MCP directory tools
 ```
 
-Wait for `Application startup complete` in the first terminal. The first report you submit is slower than the rest, because it downloads a small search model (about 80 MB) once. Streamlit opens in your browser by itself. For Next.js, open http://localhost:3000: the login page has buttons that fill in the test accounts.
+The FastAPI service is the common backend for both interfaces. It owns authentication, report submission, workflow streaming, reviews, conversations, media, and persisted application state.
 
-Ollama has to be running too, for the privacy filter. It starts by itself after you install it, so it needs no terminal. Check it with `curl http://localhost:11434`, which should answer `Ollama is running`.
+## Features
 
-Leave all three terminals open while you test, and stop each one with Ctrl+C. Restart the API after you pull changes or edit `.env`, so it picks them up.
+### Citizens
 
-To start again from nothing, stop the servers, delete `data/app.db`, `data/checkpoints.db` and `data/memory.db`, then run the seed command from step 4 to bring back the test accounts. This wipes every report.
+- Sign in and submit reports.
+- Enter text or upload an optional photo.
+- Record or upload an audio note for transcription.
+- Review the transcript before submission.
+- Track only their own reports and replies.
+- Read and continue conversations.
+- Mark a report as fixed.
 
-The report details window uses `src/components/ui/dialog.tsx`, which is part of the code (built on Base UI, already a dependency), so there is nothing extra to install.
+### Administrators
 
-## Privacy filter
+- Review the report queue by urgency, category, status, or age.
+- Inspect triage, routing, web context, duplicate, review, and draft details.
+- Approve or reject workflow stages.
+- Retry stopped workflow steps.
+- Approve, edit, or reject drafted replies.
+- View all reports and operational statistics.
+- Continue conversations and use a suggested AI chat reply.
+- Close conversations.
 
-Before a report goes to any cloud service, a small model on your own computer removes names, street addresses, phone numbers, ID numbers and emails. Place names such as "Umlazi" stay, because routing needs them.
+### AI workflow
 
-Install Ollama (Windows: download `OllamaSetup.exe` from https://ollama.com/download; macOS: `curl -fsSL https://ollama.com/install.sh | sh`). Then, in a new terminal:
+- Structured report triage.
+- Language handling and translation.
+- Department and municipality routing.
+- Web context lookup with Tavily.
+- Semantic duplicate detection.
+- Policy search through ChromaDB retrieval.
+- Draft response generation.
+- Human-review checkpoints and resumable workflow state.
+
+## Technology stack
+
+| Area | Technology |
+|---|---|
+| Backend | Python 3.12, FastAPI, Pydantic |
+| Agent framework | LangChain, LangGraph |
+| Cloud AI | Google Gemini, Groq, Tavily |
+| Local AI | Ollama |
+| Retrieval | ChromaDB |
+| Persistence | SQLite |
+| Human UI | Streamlit |
+| Web UI | Next.js 16, React 19, TypeScript, Tailwind CSS |
+| UI primitives | Base UI, shadcn-style components |
+| Package management | uv, npm |
+| Evaluation | pytest-compatible eval scripts, LangSmith optional |
+
+## Repository layout
+
+```text
+community-voice-app/
+├── src/community_voice/
+│   ├── agents/        Triage, routing, context, drafter, and chat agents
+│   ├── api/           FastAPI routes, authentication dependencies, streaming
+│   ├── auth/          Password, JWT, and account seed logic
+│   ├── core/          Environment and tracing configuration
+│   ├── db/            SQLite repositories
+│   ├── graph/         LangGraph workflow, memory, and persistence
+│   ├── llm/           Provider/model configuration
+│   ├── media/         Audio transcription and photo handling
+│   ├── privacy/       Local PII redaction
+│   ├── rag/           Chroma policy and report retrieval
+│   ├── schemas/       Pydantic domain models
+│   └── tools/         Directory, policy, web, and duplicate tools
+├── app/               Streamlit application
+├── frontend/          Next.js web application
+├── data/
+│   ├── knowledge_base/ Municipal directory, places, and policy documents
+│   ├── sample_reports/ Demo reports, audio, and photos
+│   └── evals/         Labelled and privacy evaluation data
+├── evals/             Evaluation runners and scoring
+├── notebooks/         Course and concept notebooks
+├── Dockerfile.backend Backend container definition
+├── pyproject.toml     Python dependencies and tool configuration
+├── uv.lock            Locked Python dependency versions
+└── .env.example       Backend environment template
+```
+
+Runtime files such as SQLite databases, uploaded photos, and Chroma indexes are created under `data/` and are intentionally ignored by Git.
+
+## Prerequisites
+
+- Python 3.12
+- uv
+- Node.js 24 and npm
+- Gemini API key
+- Groq API key
+- Tavily API key
+- Ollama for the local privacy filter
+
+Recommended Ollama model:
 
 ```bash
 ollama pull llama3.2:3b
 ```
 
-Keep Ollama running while you use the app. It listens on `localhost:11434`.
+LangSmith is optional.
 
-- **Ollama not running:** the report is stopped and nothing is saved. The citizen can tick a box to continue anyway. Then only numbers and emails are removed, and names and addresses may reach the AI services.
-- **PC too weak, or you do not want it:** add `PRIVACY_FILTER=false` to `.env` and restart the API. Numbers and emails are still removed; the local model is skipped.
-- **Another model:** set `OLLAMA_MODEL` in `.env` (for example `llama3.2:1b`, lighter and less accurate).
-- **Speed:** about 7 to 12 seconds more per report on a CPU-only PC; the first call after starting Ollama is slower while the model loads.
-- **Limits:** it misses some names, especially in African languages, and it can remove a little too much. Voice notes are sent to Gemini for transcription *before* any redaction (Ollama cannot transcribe); the transcript is redacted before the workflow. Only the redacted text is stored.
-- **Add places** the filter must keep in `data/knowledge_base/places.json`. Routing still knows only the areas in `directory.json`.
-- **Score it** (needs Ollama running): `uv run python -m evals.run_privacy_evals`
+## Quick start
 
-## Conversations
+Run commands from `community-voice-app/`.
 
-A reply does not mean the problem is fixed. When the admin approves the reply, a **conversation** opens for that report, with the reply as its first message.
+### 1. Install Python dependencies
 
-- **Citizen** (Messages page): reads the conversation, writes messages, and can press "Mark as fixed". That only flags it. After the admin closes the conversation it can still be read, but not written in.
-- **Admin** (Conversations page): sees which conversations need attention (the citizen wrote last or marked it fixed), reads them, gets a **suggested reply** from the Chat Assistant (Gemini, using the policy documents), edits it and sends it. The assistant never sends anything. Only the admin closes a conversation.
-- **Privacy:** a citizen's message goes through the same local privacy filter as a report (and the same consent tick if Ollama is not running). Only the redacted text is stored.
-- **Limits:** 1000 characters a message, 50 messages a conversation. There are no emails or push messages: the pages refresh about every 15 seconds, or press Refresh in Streamlit.
-- **All reports** (admin): a read-only list of every report in any status, including rejected ones. Click a row (Streamlit: select it, then "Show details") to open a **details window** with everything known about it: text, translation, urgency, routing, web check, review decisions and reply. The same window opens from the dashboard's urgent table and from a conversation.
+Windows:
 
-## Review queue
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/0.13.7/install.ps1 | iex"
+```
 
-The admin can sort the queue (most urgent, newest, oldest) and filter it by urgency, category and status. On the dashboard, an urgent report opens straight in the review queue. After you approve a review, the drafted reply takes about 7 to 15 seconds (two AI calls), and the screen says so while it works.
+macOS:
 
-**If a step fails** (for example the AI service returns 503), the report is kept and marked **Stopped** in the queue. Open it and press **Retry**: the failed step runs again and the workflow carries on. This also works after the API was restarted in the middle of a run. A report that failed *before* it was saved is not kept: the citizen is told to send it again.
+```bash
+curl -LsSf https://astral.sh/uv/0.13.7/install.sh | sh
+```
 
-Suggestions can be wrong, for example by quoting a policy time that does not fit. Read them before you send.
+Then install and verify the project environment:
 
-## Sign in
+```bash
+uv python install 3.12
+uv sync --locked
+uv run python --version
+```
 
-The API needs a login. The seed command above creates three **test accounts**. Their passwords are public: use them for demos only.
+Use `uv sync --locked` to ensure the dependency versions match `uv.lock`.
+
+### 2. Configure the backend
+
+```bash
+# macOS/Linux
+cp .env.example .env
+
+# Windows PowerShell
+Copy-Item .env.example .env
+```
+
+Fill in the required API keys described in [Configuration](#configuration).
+
+### 3. Create demo accounts
+
+```bash
+uv run python -m community_voice.auth.seed
+```
+
+### 4. Configure the frontend
+
+```bash
+cd frontend
+npm ci
+cp .env.example .env.local
+cd ..
+```
+
+PowerShell users can use `Copy-Item .env.example .env.local` for the second copy command.
+
+### 5. Start the services
+
+Start each service in a separate terminal.
+
+**Terminal 1: FastAPI**
+
+```bash
+uv run uvicorn community_voice.api.main:app --host 127.0.0.1 --port 8800
+```
+
+API docs: <http://127.0.0.1:8800/docs>
+
+**Terminal 2: Streamlit**
+
+```bash
+uv run streamlit run app/streamlit_app.py
+```
+
+Streamlit: <http://localhost:8501>
+
+**Terminal 3: Next.js**
+
+```bash
+cd frontend
+npm run dev
+```
+
+Next.js: <http://localhost:3000>
+
+## Configuration
+
+Backend variables are read from `.env`.
+
+| Variable | Required | Purpose |
+|---|---:|---|
+| `GEMINI_API_KEY` | Yes | Gemini triage, drafting, chat, and transcription |
+| `GROQ_API_KEY` | Yes | Routing and context-check models |
+| `TAVILY_API_KEY` | Yes | Web context search |
+| `JWT_SECRET` | Yes | Signs login tokens |
+| `GEMINI_MODEL` | No | Override the Gemini model |
+| `GROQ_MODEL` | No | Override the Groq model |
+| `OLLAMA_MODEL` | No | Privacy model; default `llama3.2:3b` |
+| `OLLAMA_BASE_URL` | No | Default `http://localhost:11434` |
+| `PRIVACY_FILTER` | No | Set `false` to disable the Ollama privacy model |
+| `LANGSMITH_API_KEY` | No | Enables LangSmith tracing |
+| `LANGSMITH_TRACING` | No | Set `true` to trace LangSmith runs |
+| `LANGSMITH_PROJECT` | No | LangSmith project name |
+
+Generate a JWT secret:
+
+```bash
+openssl rand -hex 32
+```
+
+The Next.js frontend uses `frontend/.env.local`:
+
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:8800
+```
+
+## Running the applications
+
+FastAPI must start before submitting reports or using either UI. API startup builds the LangGraph workflow and opens the local persistence/checkpoint stores.
+
+Ollama must be running for full local redaction:
+
+```bash
+ollama serve
+```
+
+Check it in a browser or terminal:
+
+```text
+http://localhost:11434
+```
+
+The first AI or embedding operation can be slower because dependencies and indexes may initialize on the first run.
+
+## Demo accounts
+
+These accounts are for local demonstration only.
 
 | Role | Email | Password |
 |---|---|---|
-| Admin (reviews reports and drafts, sees the dashboard) | `admin@communityvoice.test` | `AdminPass123` |
-| Citizen 1 (submits reports, sees only their own) | `citizen1@communityvoice.test` | `Citizen1Pass123` |
-| Citizen 2 (submits reports, sees only their own) | `citizen2@communityvoice.test` | `Citizen2Pass123` |
+| Administrator | `admin@communityvoice.test` | `AdminPass123` |
+| Citizen | `citizen1@communityvoice.test` | `Citizen1Pass123` |
+| Citizen | `citizen2@communityvoice.test` | `Citizen2Pass123` |
 
-In the Streamlit app, sign in on the first screen. A citizen follows their reports and reads the reply on the My Reports page, and talks to the municipality on the Messages page. The pages are the same for everyone, and the API refuses what the account may not do (a citizen opening the review queue gets "Admins only"). In the API docs page, use the Authorize button.
+Citizens can submit reports and access only their own report and conversation data. Administrators can use review, dashboard, history, and conversation tools.
 
-## Other things to run
+## Privacy and voice processing
 
-- Notebooks: open `notebooks/` in VS Code and pick the project's `.venv` as the kernel. Clear the outputs before committing.
-- Evals (scores triage and routing on 20 labelled reports):
+Text reports and citizen chat messages are processed by a local Ollama privacy filter before cloud AI providers receive them.
 
-  ```bash
-  uv run python -m evals.run_evals --refresh
-  ```
+The filter targets names, street addresses, phone numbers, identity numbers, and email addresses. Place names in `data/knowledge_base/places.json` can be retained so the routing workflow has useful location context.
 
-- Tests that call the real AI services: `uv run pytest -m live -s`
-- Lint and format: `uv run ruff format` and `uv run ruff check`
+Important behavior:
 
-## How a report moves
+- If Ollama is unavailable and `allow_unfiltered` is accepted, only numbers and emails receive fallback redaction.
+- Set `PRIVACY_FILTER=false` to skip the local model. Rule-based number and email redaction still applies.
+- Voice notes are transcribed by Gemini before text privacy filtering; a transcript should always be reviewed by the citizen.
+- Never send real personal data to cloud providers or tracing services. Use fictional demo data.
+- Privacy filtering is assistance, not a guarantee of anonymity or regulatory compliance.
 
-Privacy filter (local) → Triage (language, category, urgency) → Routing (municipality and department) → Context check (web search for known outages) → Duplicate check → Save → **Human review** → Drafter (reply from policy documents) → **Draft approval** → ready to send → **Conversation** with the citizen until the admin closes it.
+Run privacy evaluations:
 
-## Folder guide
-
-```
-src/community_voice/     The application
-  core/                  Settings (.env) and tracing setup
-  auth/                  Password hashing, login tokens and the test-account seed
-  schemas/               Pydantic models: the shape of data passed between steps
-  llm/                   Which model (Gemini, Groq or local Ollama) each agent uses
-  privacy/               The privacy filter: removes personal details before the cloud
-  agents/                Triage, routing, context check, drafter and chat assistant agents
-  tools/                 What the agents can call: directory lookup, policy search,
-                         web search, duplicate search
-  rag/                   Search indexes (Chroma): policy documents and past reports
-  graph/                 The LangGraph workflow: state, steps, pauses for humans,
-                         saved progress and long-term memory
-  db/                    SQLite storage for reports, reviews, drafts and users
-  media/                 Voice-note transcription and photo checks
-  api/                   FastAPI endpoints and streaming of progress
-  mcp_server/            The directory tools served over MCP (a demo; the app
-                         does not need it)
-app/                     Streamlit screens: sign in, submit, my reports, messages, review queue,
-                         conversations, all reports, dashboard
-frontend/                The Next.js app (TypeScript, Tailwind, shadcn/ui)
-  src/app/               Routes only: login, then citizen and admin screens
-  src/features/          One folder per feature: auth, reports, review, chat, history,
-                         dashboard, runs (each with its API calls, schemas, hooks,
-                         components)
-  src/components/        Shared UI: ui (shadcn), layout, shared
-  src/lib/               API client, stream reader, token store, helpers
-  src/schemas/           zod schemas shared by features
-data/
-  knowledge_base/        Department directory, South African places and fictional policy documents
-  sample_reports/        Sample reports, with voice recordings for the demo
-  evals/                 The 20 labelled reports and the 12 privacy test reports
-evals/                   Scoring code and the saved baseline scores
-notebooks/               One notebook per concept: 01 to 12, 15 and 16 (the UI phases have none)
-tests/                   unit/ runs offline; integration/ calls the real services
-docs/teaching-log/       How each phase was built, with decisions and fixes
-pyproject.toml, uv.lock  Libraries and tool settings (uv manages both)
-.env.example             Template for your keys
+```bash
+uv run python -m evals.run_privacy_evals
 ```
 
-Files created while you use the app and not committed: `data/app.db`, `data/checkpoints.db`, `data/memory.db` (reports, paused workflows, memory), `data/chroma/` (search indexes) and `data/uploads/` (photos).
+## Workflow
 
-## Good to know
+```text
+Privacy filter
+  -> Triage
+  -> Municipality/department routing
+  -> Web context check
+  -> Duplicate check
+  -> Human triage review
+  -> Draft response
+  -> Human draft review
+  -> Ready
+  -> Conversation
+```
 
-- Voice notes are transcribed automatically and can be wrong, so the citizen always checks the text. isiZulu, isiXhosa, Sesotho and Setswana are experimental.
-- On Gemini's free tier, Google may use what you send to improve its products. Use fictional data. The privacy filter lowers the risk but does not make data anonymous.
-- The API runs on localhost only. Login covers two roles (citizen and admin); there is no registration, rate limiting or password reset.
-- Free-tier models can return "503" or rate-limit errors at busy times. Wait a minute and try again. The chat assistant can take up to a minute.
+### Human review
+
+Workflow checkpoints persist the graph state. An administrator can approve a stage or stop and correct a workflow. If a provider or network call fails, the report may remain as `Stopped`; the stopped step can be retried after restarting or correcting the configuration.
+
+### Conversations
+
+After an approved reply is sent:
+
+- Citizens can read the conversation and send follow-up messages.
+- Citizens can mark the report as fixed.
+- Administrators receive attention indicators, can read messages, and can generate an editable suggested reply.
+- Only an administrator can close a conversation.
+- Closed conversations remain readable but cannot accept new messages.
+
+## API overview
+
+FastAPI Swagger documentation is available at <http://127.0.0.1:8800/docs>.
+
+Representative endpoints:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | API health check |
+| `POST` | `/auth/login` | Create a login token |
+| `POST` | `/transcriptions` | Transcribe an uploaded voice note |
+| `POST` | `/reports` | Submit a report as an SSE workflow stream |
+| `GET` | `/reports` | List all reports (admin) |
+| `GET` | `/my/reports` | List the current citizen's reports |
+| `GET` | `/reviews` | List reports waiting for review |
+| `GET` | `/stats` | Report statistics (admin) |
+| `GET` | `/reports/{report_id}` | Read report detail |
+| `GET` | `/threads` | List all conversations (admin) |
+| `GET` | `/my/threads` | List the current citizen's conversations |
+| `GET` | `/threads/{report_id}` | Read a conversation |
+| `POST` | `/threads/{report_id}/messages` | Send a conversation message |
+| `POST` | `/threads/{report_id}/fixed` | Mark a report as fixed (citizen) |
+| `POST` | `/threads/{report_id}/suggest` | Generate an admin reply suggestion |
+| `POST` | `/threads/{report_id}/close` | Close a conversation (admin) |
+
+Authentication uses JWT bearer tokens. Next.js stores the token in the browser and sends it through the `Authorization` header.
+
+## Eval and quality workflows
+
+Run the offline/unit-style checks:
+
+```bash
+uv run pytest
+```
+
+No test directory is currently included in this repository snapshot, so pytest will report if no tests are discoverable.
+
+Run live provider tests only when API keys are configured:
+
+```bash
+uv run pytest -m live -s
+```
+
+Run triage/routing evaluations:
+
+```bash
+uv run python -m evals.run_evals --refresh
+```
+
+Run privacy evaluations:
+
+```bash
+uv run python -m evals.run_privacy_evals
+```
+
+Lint and format:
+
+```bash
+uv run ruff check
+uv run ruff format
+```
+
+Frontend lint:
+
+```bash
+cd frontend
+npm run lint
+npm run build
+```
+
+Notebooks are stored in `notebooks/`. Select the project `.venv` kernel and clear outputs before committing notebook changes.
+
+## Docker
+
+Build the backend image:
+
+```bash
+docker build -f Dockerfile.backend -t community-voice-api .
+```
+
+Run it with your environment file:
+
+```bash
+docker run --rm -p 8800:8800 --env-file .env -v "${PWD}/data:/app/data" community-voice-api
+```
+
+This command is written for PowerShell. The bind mount is optional if you want container-local data, but SQLite and uploaded files will not persist after the container is removed unless `data/` is mounted.
+
+The Dockerfile starts FastAPI on `0.0.0.0:8800`. It does not start Streamlit, Next.js, or Ollama; run those separately or add an orchestration file for a multi-container deployment.
+
+## Resetting local data
+
+Stop all running services before deleting state.
+
+Delete the following to reset reports and workflow state:
+
+- `data/app.db`
+- `data/checkpoints.db`
+- `data/memory.db`
+
+Then recreate demo accounts:
+
+```bash
+uv run python -m community_voice.auth.seed
+```
+
+Other generated state may include `data/chroma/` and `data/uploads/`. Use targeted deletion only if a fresh retrieval index or uploaded media reset is also needed.
+
+## Troubleshooting
+
+### Ollama is unavailable
+
+- Confirm `ollama serve` is running.
+- Confirm `OLLAMA_BASE_URL` is correct.
+- Run `ollama pull llama3.2:3b`.
+- Restart FastAPI after changing `.env`.
+
+### API is not reachable
+
+- Confirm FastAPI is running on port 8800.
+- Open <http://127.0.0.1:8800/health>.
+- Confirm `NEXT_PUBLIC_API_URL=http://localhost:8800` in `frontend/.env.local`.
+
+### Dependency lock error
+
+Restore matching `pyproject.toml` and `uv.lock` files. Install with `uv sync --locked`, and do not update locked dependencies while following a pinned course/demo setup.
+
+### Frontend dependency error
+
+Use:
+
+```bash
+cd frontend
+npm ci
+```
+
+Do not substitute `npm install` for `npm ci` when lockfile reproducibility matters.
+
+### AI provider errors
+
+Free-tier providers can return 503, timeout, quota, or rate-limit errors. Check credentials, wait briefly, and retry. Report workflows can remain stopped and be retried from the admin review interface.
